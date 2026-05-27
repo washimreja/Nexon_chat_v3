@@ -19,6 +19,13 @@ interface ChatContextType {
 
 const ChatContext = createContext<ChatContextType | undefined>(undefined);
 
+const GROQ_MODEL_MAP: Record<Model, string> = {
+  'Nexon-4o': 'llama-3.3-70b-versatile',
+  'Nexon-4o mini': 'llama-3.1-8b-instant',
+  'Nexon-o1': 'deepseek-r1-distill-llama-70b',
+  'Nexon-o1 mini': 'llama-3.1-8b-instant',
+};
+
 const GEMINI_MODEL_MAP: Record<Model, string> = {
   'Nexon-4o': 'gemini-2.0-flash',
   'Nexon-4o mini': 'gemini-2.0-flash-lite',
@@ -26,10 +33,19 @@ const GEMINI_MODEL_MAP: Record<Model, string> = {
   'Nexon-o1 mini': 'gemini-2.0-flash-lite',
 };
 
-const FALLBACK_RESPONSES = [
-  "I'm sorry, I couldn't connect to the AI service right now. Please check that your API key is configured in the `.env` file:\n\n```\nVITE_GEMINI_API_KEY=your_api_key_here\n```\n\nYou can get a free API key at: https://aistudio.google.com/app/apikey",
-  "API connection failed. Make sure `VITE_GEMINI_API_KEY` is set in your `.env` file and restart the dev server.",
-];
+const SYSTEM_PROMPT = 'You are Nexon Chat, a helpful AI assistant. Respond in markdown when appropriate. Be concise, helpful, and friendly.';
+
+type Provider = 'groq' | 'gemini';
+
+function detectProvider(): { provider: Provider; apiKey: string } | null {
+  const groqKey = import.meta.env.VITE_GROQ_API_KEY;
+  if (groqKey) return { provider: 'groq', apiKey: groqKey };
+
+  const geminiKey = import.meta.env.VITE_GEMINI_API_KEY;
+  if (geminiKey) return { provider: 'gemini', apiKey: geminiKey };
+
+  return null;
+}
 
 function generateTitle(message: string): string {
   const words = message.split(' ').slice(0, 6);
@@ -37,11 +53,134 @@ function generateTitle(message: string): string {
   return title.length > 40 ? title.substring(0, 40) + '...' : title + (words.length < message.split(' ').length ? '...' : '');
 }
 
+function buildGroqMessages(messages: Message[]) {
+  return [
+    { role: 'system' as const, content: SYSTEM_PROMPT },
+    ...messages.map(m => ({
+      role: m.role as 'user' | 'assistant',
+      content: m.content,
+    })),
+  ];
+}
+
 function buildGeminiContents(messages: Message[]) {
   return messages.map(m => ({
     role: m.role === 'user' ? 'user' : 'model',
     parts: [{ text: m.content }],
   }));
+}
+
+async function streamGroq(
+  apiKey: string,
+  model: string,
+  messages: Message[],
+  signal: AbortSignal,
+  onChunk: (text: string) => void,
+) {
+  const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model,
+      messages: buildGroqMessages(messages),
+      stream: true,
+      temperature: 0.8,
+      max_tokens: 2048,
+    }),
+    signal,
+  });
+
+  if (!response.ok) {
+    const errText = await response.text().catch(() => '');
+    throw new Error(`Groq API error ${response.status}: ${errText}`);
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error('No response stream');
+
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue;
+      const jsonStr = line.slice(6).trim();
+      if (!jsonStr || jsonStr === '[DONE]') continue;
+
+      try {
+        const parsed = JSON.parse(jsonStr);
+        const delta = parsed?.choices?.[0]?.delta?.content;
+        if (delta) onChunk(delta);
+      } catch {
+        // skip malformed chunks
+      }
+    }
+  }
+}
+
+async function streamGemini(
+  apiKey: string,
+  model: string,
+  messages: Message[],
+  signal: AbortSignal,
+  onChunk: (text: string) => void,
+) {
+  const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${apiKey}`;
+
+  const response = await fetch(apiUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: buildGeminiContents(messages),
+      generationConfig: { temperature: 0.8, maxOutputTokens: 2048 },
+      systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+    }),
+    signal,
+  });
+
+  if (!response.ok) {
+    const errText = await response.text().catch(() => '');
+    throw new Error(`Gemini API error ${response.status}: ${errText}`);
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error('No response stream');
+
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue;
+      const jsonStr = line.slice(6).trim();
+      if (!jsonStr || jsonStr === '[DONE]') continue;
+
+      try {
+        const parsed = JSON.parse(jsonStr);
+        const text = parsed?.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (text) onChunk(text);
+      } catch {
+        // skip malformed chunks
+      }
+    }
+  }
 }
 
 export function ChatProvider({ children }: { children: ReactNode }) {
@@ -69,6 +208,16 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const deleteConversation = useCallback((id: string) => {
     setConversations(prev => prev.filter(c => c.id !== id));
     setActiveConversationId(prevId => prevId === id ? null : prevId);
+  }, []);
+
+  const updateMessage = useCallback((convId: string, msgId: string, content: string) => {
+    setConversations(prev =>
+      prev.map(c =>
+        c.id === convId
+          ? { ...c, messages: c.messages.map(m => m.id === msgId ? { ...m, content } : m) }
+          : c
+      )
+    );
   }, []);
 
   const sendMessage = useCallback((content: string) => {
@@ -128,87 +277,29 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       )
     );
 
-    const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
-    if (!apiKey) {
-      const fallback = FALLBACK_RESPONSES[0];
+    const config = detectProvider();
+    if (!config) {
+      const fallback = "No API key configured. Add one of these to your `.env` file:\n\n```\n# Option 1: Groq (recommended — free & fast)\nVITE_GROQ_API_KEY=your_key_here\n# Get one at: https://console.groq.com/keys\n\n# Option 2: Google Gemini\nVITE_GEMINI_API_KEY=your_key_here\n# Get one at: https://aistudio.google.com/app/apikey\n```\n\nThen restart the dev server.";
       streamFallback(capturedId, assistantMessageId, fallback);
       return;
     }
 
-    const geminiModel = GEMINI_MODEL_MAP[selectedModel];
-    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:streamGenerateContent?alt=sse&key=${apiKey}`;
-
     const controller = new AbortController();
     abortRef.current = controller;
 
-    const body = {
-      contents: buildGeminiContents(existingMessages),
-      generationConfig: {
-        temperature: 0.8,
-        maxOutputTokens: 2048,
-      },
-      systemInstruction: {
-        parts: [{ text: 'You are Nexon Chat, a helpful AI assistant. Respond in markdown when appropriate. Be concise, helpful, and friendly.' }],
-      },
+    let accumulated = '';
+    const onChunk = (text: string) => {
+      accumulated += text;
+      const snapshot = accumulated;
+      updateMessage(capturedId, assistantMessageId, snapshot);
     };
 
-    fetch(apiUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    })
-      .then(async (response) => {
-        if (!response.ok) {
-          const errText = await response.text().catch(() => '');
-          throw new Error(`API error ${response.status}: ${errText}`);
-        }
+    const streamFn = config.provider === 'groq'
+      ? streamGroq(config.apiKey, GROQ_MODEL_MAP[selectedModel], existingMessages, controller.signal, onChunk)
+      : streamGemini(config.apiKey, GEMINI_MODEL_MAP[selectedModel], existingMessages, controller.signal, onChunk);
 
-        const reader = response.body?.getReader();
-        if (!reader) throw new Error('No response stream');
-
-        const decoder = new TextDecoder();
-        let accumulated = '';
-        let buffer = '';
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop() || '';
-
-          for (const line of lines) {
-            if (!line.startsWith('data: ')) continue;
-            const jsonStr = line.slice(6).trim();
-            if (!jsonStr || jsonStr === '[DONE]') continue;
-
-            try {
-              const parsed = JSON.parse(jsonStr);
-              const text = parsed?.candidates?.[0]?.content?.parts?.[0]?.text;
-              if (text) {
-                accumulated += text;
-                const snapshot = accumulated;
-                setConversations(prev =>
-                  prev.map(c =>
-                    c.id === capturedId
-                      ? {
-                          ...c,
-                          messages: c.messages.map(m =>
-                            m.id === assistantMessageId ? { ...m, content: snapshot } : m
-                          ),
-                        }
-                      : c
-                  )
-                );
-              }
-            } catch {
-              // skip malformed chunks
-            }
-          }
-        }
-
+    streamFn
+      .then(() => {
         setIsGenerating(false);
         abortRef.current = null;
       })
@@ -217,7 +308,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           setIsGenerating(false);
           return;
         }
-        console.error('Gemini API error:', err);
+        console.error(`${config.provider} API error:`, err);
         const errorMsg = `Sorry, I encountered an error connecting to the AI service.\n\n**Error:** ${err.message}\n\nPlease verify your API key is valid and try again.`;
         streamFallback(capturedId, assistantMessageId, errorMsg);
       });
@@ -231,22 +322,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           clearInterval(interval);
           setIsGenerating(false);
         }
-        const current = text.substring(0, charIndex);
-        setConversations(prev =>
-          prev.map(c =>
-            c.id === convId
-              ? {
-                  ...c,
-                  messages: c.messages.map(m =>
-                    m.id === msgId ? { ...m, content: current } : m
-                  ),
-                }
-              : c
-          )
-        );
+        updateMessage(convId, msgId, text.substring(0, charIndex));
       }, 20);
     }
-  }, [activeConversationId, conversations, isGenerating, selectedModel]);
+  }, [activeConversationId, conversations, isGenerating, selectedModel, updateMessage]);
 
   return (
     <ChatContext.Provider
