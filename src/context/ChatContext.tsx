@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useCallback, type ReactNode } from 'react';
+import { createContext, useContext, useState, useCallback, useRef, type ReactNode } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import type { Conversation, Message, Model } from '../types/chat';
 
@@ -19,22 +19,29 @@ interface ChatContextType {
 
 const ChatContext = createContext<ChatContextType | undefined>(undefined);
 
-const SIMULATED_RESPONSES = [
-  "That's a great question! Let me think about that for a moment.\n\nBased on my analysis, here's what I can tell you:\n\n1. **First point**: The key consideration here is understanding the underlying principles.\n2. **Second point**: It's important to consider multiple perspectives.\n3. **Third point**: The practical implications are quite significant.\n\nWould you like me to elaborate on any of these points?",
-  "I'd be happy to help with that! Here's a comprehensive breakdown:\n\n```python\ndef example_function(data):\n    \"\"\"Process the data and return results.\"\"\"\n    results = []\n    for item in data:\n        processed = transform(item)\n        results.append(processed)\n    return results\n```\n\nThis approach offers several advantages:\n- **Efficiency**: O(n) time complexity\n- **Readability**: Clear and maintainable code\n- **Flexibility**: Easy to extend\n\nLet me know if you need any modifications!",
-  "Absolutely! Here's what you need to know:\n\n## Overview\n\nThe concept you're asking about is fundamental to understanding modern systems. Let me break it down:\n\n### Key Components\n- **Architecture**: The system follows a modular design pattern\n- **Data Flow**: Information moves through well-defined pipelines\n- **Scalability**: Built to handle increasing demands\n\n### Best Practices\n1. Always validate input data\n2. Implement proper error handling\n3. Monitor performance metrics\n4. Document your approach\n\nIs there a specific aspect you'd like to dive deeper into?",
-  "Great topic! Let me provide a detailed explanation.\n\nThe short answer is: **it depends on your specific use case**.\n\nHere's why:\n\n| Factor | Option A | Option B |\n|--------|----------|----------|\n| Speed | Fast | Moderate |\n| Cost | Higher | Lower |\n| Complexity | Simple | Complex |\n\nFor most scenarios, I'd recommend starting with Option A due to its simplicity, then optimizing later if needed.\n\n> \"Premature optimization is the root of all evil\" - Donald Knuth\n\nWant me to help you evaluate which option fits your needs best?",
-  "That's an interesting challenge! Here's my approach:\n\n### Step 1: Analysis\nFirst, we need to understand the problem space. The key variables are:\n- Input size and format\n- Expected output\n- Performance requirements\n\n### Step 2: Implementation\n```javascript\nconst solution = (input) => {\n  const processed = input\n    .filter(item => item.isValid)\n    .map(item => transform(item))\n    .reduce((acc, val) => merge(acc, val), {});\n  \n  return optimize(processed);\n};\n```\n\n### Step 3: Verification\nAlways test with edge cases! Let me know if you'd like me to walk through the testing strategy.",
-];
+const GEMINI_MODEL_MAP: Record<Model, string> = {
+  'Nexon-4o': 'gemini-2.0-flash',
+  'Nexon-4o mini': 'gemini-2.0-flash-lite',
+  'Nexon-o1': 'gemini-2.5-flash-preview-05-20',
+  'Nexon-o1 mini': 'gemini-2.0-flash-lite',
+};
 
-function getSimulatedResponse(): string {
-  return SIMULATED_RESPONSES[Math.floor(Math.random() * SIMULATED_RESPONSES.length)];
-}
+const FALLBACK_RESPONSES = [
+  "I'm sorry, I couldn't connect to the AI service right now. Please check that your API key is configured in the `.env` file:\n\n```\nVITE_GEMINI_API_KEY=your_api_key_here\n```\n\nYou can get a free API key at: https://aistudio.google.com/app/apikey",
+  "API connection failed. Make sure `VITE_GEMINI_API_KEY` is set in your `.env` file and restart the dev server.",
+];
 
 function generateTitle(message: string): string {
   const words = message.split(' ').slice(0, 6);
   const title = words.join(' ');
   return title.length > 40 ? title.substring(0, 40) + '...' : title + (words.length < message.split(' ').length ? '...' : '');
+}
+
+function buildGeminiContents(messages: Message[]) {
+  return messages.map(m => ({
+    role: m.role === 'user' ? 'user' : 'model',
+    parts: [{ text: m.content }],
+  }));
 }
 
 export function ChatProvider({ children }: { children: ReactNode }) {
@@ -43,6 +50,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const [selectedModel, setSelectedModel] = useState<Model>('Nexon-4o');
   const [isGenerating, setIsGenerating] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const abortRef = useRef<AbortController | null>(null);
 
   const activeConversation = conversations.find(c => c.id === activeConversationId) ?? null;
 
@@ -74,6 +82,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     };
 
     let conversationId = activeConversationId;
+    let existingMessages: Message[] = [];
 
     if (!conversationId) {
       conversationId = uuidv4();
@@ -87,7 +96,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       };
       setConversations(prev => [newConversation, ...prev]);
       setActiveConversationId(conversationId);
+      existingMessages = [userMessage];
     } else {
+      const current = conversations.find(c => c.id === conversationId);
+      existingMessages = current ? [...current.messages, userMessage] : [userMessage];
       setConversations(prev =>
         prev.map(c =>
           c.id === conversationId
@@ -99,48 +111,142 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 
     setIsGenerating(true);
     const capturedId = conversationId;
+    const assistantMessageId = uuidv4();
 
-    setTimeout(() => {
-      const fullResponse = getSimulatedResponse();
-      const assistantMessage: Message = {
-        id: uuidv4(),
-        role: 'assistant',
-        content: '',
-        timestamp: Date.now(),
-      };
+    const assistantMessage: Message = {
+      id: assistantMessageId,
+      role: 'assistant',
+      content: '',
+      timestamp: Date.now(),
+    };
 
-      setConversations(prev =>
-        prev.map(c =>
-          c.id === capturedId
-            ? { ...c, messages: [...c.messages, assistantMessage], updatedAt: Date.now() }
-            : c
-        )
-      );
+    setConversations(prev =>
+      prev.map(c =>
+        c.id === capturedId
+          ? { ...c, messages: [...c.messages, assistantMessage], updatedAt: Date.now() }
+          : c
+      )
+    );
 
+    const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+    if (!apiKey) {
+      const fallback = FALLBACK_RESPONSES[0];
+      streamFallback(capturedId, assistantMessageId, fallback);
+      return;
+    }
+
+    const geminiModel = GEMINI_MODEL_MAP[selectedModel];
+    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:streamGenerateContent?alt=sse&key=${apiKey}`;
+
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    const body = {
+      contents: buildGeminiContents(existingMessages),
+      generationConfig: {
+        temperature: 0.8,
+        maxOutputTokens: 2048,
+      },
+      systemInstruction: {
+        parts: [{ text: 'You are Nexon Chat, a helpful AI assistant. Respond in markdown when appropriate. Be concise, helpful, and friendly.' }],
+      },
+    };
+
+    fetch(apiUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          const errText = await response.text().catch(() => '');
+          throw new Error(`API error ${response.status}: ${errText}`);
+        }
+
+        const reader = response.body?.getReader();
+        if (!reader) throw new Error('No response stream');
+
+        const decoder = new TextDecoder();
+        let accumulated = '';
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            const jsonStr = line.slice(6).trim();
+            if (!jsonStr || jsonStr === '[DONE]') continue;
+
+            try {
+              const parsed = JSON.parse(jsonStr);
+              const text = parsed?.candidates?.[0]?.content?.parts?.[0]?.text;
+              if (text) {
+                accumulated += text;
+                const snapshot = accumulated;
+                setConversations(prev =>
+                  prev.map(c =>
+                    c.id === capturedId
+                      ? {
+                          ...c,
+                          messages: c.messages.map(m =>
+                            m.id === assistantMessageId ? { ...m, content: snapshot } : m
+                          ),
+                        }
+                      : c
+                  )
+                );
+              }
+            } catch {
+              // skip malformed chunks
+            }
+          }
+        }
+
+        setIsGenerating(false);
+        abortRef.current = null;
+      })
+      .catch((err) => {
+        if (err.name === 'AbortError') {
+          setIsGenerating(false);
+          return;
+        }
+        console.error('Gemini API error:', err);
+        const errorMsg = `Sorry, I encountered an error connecting to the AI service.\n\n**Error:** ${err.message}\n\nPlease verify your API key is valid and try again.`;
+        streamFallback(capturedId, assistantMessageId, errorMsg);
+      });
+
+    function streamFallback(convId: string, msgId: string, text: string) {
       let charIndex = 0;
       const interval = setInterval(() => {
         charIndex += Math.floor(Math.random() * 3) + 2;
-        if (charIndex >= fullResponse.length) {
-          charIndex = fullResponse.length;
+        if (charIndex >= text.length) {
+          charIndex = text.length;
           clearInterval(interval);
           setIsGenerating(false);
         }
-        const currentText = fullResponse.substring(0, charIndex);
+        const current = text.substring(0, charIndex);
         setConversations(prev =>
           prev.map(c =>
-            c.id === capturedId
+            c.id === convId
               ? {
                   ...c,
                   messages: c.messages.map(m =>
-                    m.id === assistantMessage.id ? { ...m, content: currentText } : m
+                    m.id === msgId ? { ...m, content: current } : m
                   ),
                 }
               : c
           )
         );
       }, 20);
-    }, 500 + Math.random() * 1000);
-  }, [activeConversationId, isGenerating, selectedModel]);
+    }
+  }, [activeConversationId, conversations, isGenerating, selectedModel]);
 
   return (
     <ChatContext.Provider
