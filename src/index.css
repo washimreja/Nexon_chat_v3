@@ -17,7 +17,8 @@
   --bg-active: #303030;
   --bg-dropdown: #1c1c1c;
   --bg-code: #0c0c0c;
-  --bg-user-msg: #2c2c2c;
+  --bg-user-msg: #000000;
+  --bg-assistant-msg: transparent;
   --text-primary: #e4e4e4;
   --text-secondary: #9a9a9a;
   --text-muted: #666666;
@@ -30,30 +31,35 @@
   --scrollbar-thumb: #383838;
   --scrollbar-track: transparent;
   --voice-bg: #333333;
+  --user-msg-text: #ffffff;
+  --avatar-bg: #1e1e1e;
 }
 
 [data-theme="light"] {
   --bg-primary: #ffffff;
   --bg-secondary: #f7f7f8;
-  --bg-sidebar: #f0f0f5;
-  --bg-input: #f0f0f5;
-  --bg-hover: #e8e8f0;
-  --bg-active: #dddde8;
+  --bg-sidebar: #f5f5f5;
+  --bg-input: #f0f0f0;
+  --bg-hover: #e8e8e8;
+  --bg-active: #e0e0e0;
   --bg-dropdown: #ffffff;
-  --bg-code: #f5f5fa;
-  --bg-user-msg: #e8e5ff;
-  --text-primary: #1a1a2e;
-  --text-secondary: #555570;
-  --text-muted: #8888a0;
+  --bg-code: #f5f5f5;
+  --bg-user-msg: #ffffff;
+  --bg-assistant-msg: transparent;
+  --text-primary: #1a1a1a;
+  --text-secondary: #555555;
+  --text-muted: #888888;
   --text-accent: #6a5cd0;
-  --border-color: #e0e0ea;
+  --border-color: #e0e0e0;
   --accent: #6a5cd0;
   --accent-hover: #5a4cc0;
-  --send-bg: #1a1a2e;
+  --send-bg: #1a1a1a;
   --send-text: #ffffff;
-  --scrollbar-thumb: #c0c0d0;
+  --scrollbar-thumb: #c0c0c0;
   --scrollbar-track: transparent;
-  --voice-bg: #e8e5ff;
+  --voice-bg: #e8e8e8;
+  --user-msg-text: #1a1a1a;
+  --avatar-bg: #e8e8e8;
 }
 
 /* ==============================
@@ -783,18 +789,29 @@ button {
 
 .message-bubble.user {
   background: var(--bg-user-msg);
-  padding: 12px 18px;
-  border-radius: 20px 20px 4px 20px;
+  color: var(--user-msg-text);
+  padding: 12px 20px;
+  border-radius: 22px 22px 4px 22px;
   max-width: 75%;
   font-size: 15px;
   line-height: 1.6;
+  font-weight: 400;
+}
+
+[data-theme="dark"] .message-bubble.user {
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+[data-theme="light"] .message-bubble.user {
+  border: 1px solid var(--border-color);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
 }
 
 .message-avatar {
   width: 32px;
   height: 32px;
   border-radius: 50%;
-  background: var(--bg-active);
+  background: var(--avatar-bg);
   display: flex;
   align-items: center;
   justify-content: center;
