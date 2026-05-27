@@ -590,15 +590,71 @@ button {
   gap: 20px;
 }
 
-.welcome-sparkle {
-  filter: drop-shadow(0 0 12px rgba(124, 111, 224, 0.4));
-  animation: sparkleGlow 3s ease-in-out infinite alternate;
+/* Nexon Icon — modern rotating gradient circle */
+.nexon-icon {
+  position: relative;
+  width: 72px;
+  height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
-@keyframes sparkleGlow {
-  0% { filter: drop-shadow(0 0 12px rgba(124, 111, 224, 0.3)); transform: scale(1); }
-  50% { filter: drop-shadow(0 0 20px rgba(74, 144, 217, 0.5)); transform: scale(1.05); }
-  100% { filter: drop-shadow(0 0 16px rgba(110, 231, 183, 0.4)); transform: scale(1); }
+.nexon-icon-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  padding: 2.5px;
+  background: conic-gradient(
+    from 0deg,
+    #7c6fe0,
+    #4a90d9,
+    #67e8f9,
+    #6ee7b7,
+    #a78bfa,
+    #f472b6,
+    #7c6fe0
+  );
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  animation: iconSpin 4s linear infinite;
+}
+
+.nexon-icon-glow {
+  position: absolute;
+  inset: -8px;
+  border-radius: 50%;
+  background: conic-gradient(
+    from 0deg,
+    rgba(124, 111, 224, 0.3),
+    rgba(74, 144, 217, 0.2),
+    rgba(103, 232, 249, 0.25),
+    rgba(110, 231, 183, 0.2),
+    rgba(167, 139, 250, 0.25),
+    rgba(244, 114, 182, 0.15),
+    rgba(124, 111, 224, 0.3)
+  );
+  filter: blur(16px);
+  animation: iconSpin 4s linear infinite, iconPulse 3s ease-in-out infinite alternate;
+  z-index: -1;
+}
+
+.nexon-icon-svg {
+  position: relative;
+  z-index: 1;
+  filter: drop-shadow(0 0 6px rgba(167, 139, 250, 0.5));
+}
+
+@keyframes iconSpin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes iconPulse {
+  0% { opacity: 0.5; transform: rotate(0deg) scale(1); }
+  50% { opacity: 0.8; }
+  100% { opacity: 0.6; transform: rotate(360deg) scale(1.1); }
 }
 
 .welcome-title {

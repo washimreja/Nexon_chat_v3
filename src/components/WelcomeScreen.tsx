@@ -1,27 +1,37 @@
 import { Image, Pencil, Globe } from 'lucide-react';
 import ChatInput from './ChatInput';
 
-function NexonSparkle() {
+function NexonIcon() {
   return (
-    <svg width="48" height="48" viewBox="0 0 48 48" fill="none" className="welcome-sparkle">
-      <defs>
-        <linearGradient id="sparkleGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" stopColor="#7c6fe0">
-            <animate attributeName="stop-color" values="#7c6fe0;#4a90d9;#6ee7b7;#7c6fe0" dur="4s" repeatCount="indefinite" />
-          </stop>
-          <stop offset="50%" stopColor="#4a90d9">
-            <animate attributeName="stop-color" values="#4a90d9;#6ee7b7;#7c6fe0;#4a90d9" dur="4s" repeatCount="indefinite" />
-          </stop>
-          <stop offset="100%" stopColor="#6ee7b7">
-            <animate attributeName="stop-color" values="#6ee7b7;#7c6fe0;#4a90d9;#6ee7b7" dur="4s" repeatCount="indefinite" />
-          </stop>
-        </linearGradient>
-      </defs>
-      <path
-        d="M24 4L28 18L42 24L28 30L24 44L20 30L6 24L20 18Z"
-        fill="url(#sparkleGrad)"
-      />
-    </svg>
+    <div className="nexon-icon">
+      {/* Outer rotating gradient ring */}
+      <div className="nexon-icon-ring" />
+      {/* Inner glow pulse */}
+      <div className="nexon-icon-glow" />
+      {/* Center icon — abstract "N" letterform */}
+      <svg
+        className="nexon-icon-svg"
+        width="32"
+        height="32"
+        viewBox="0 0 32 32"
+        fill="none"
+      >
+        <defs>
+          <linearGradient id="nGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor="#c4b5fd" />
+            <stop offset="100%" stopColor="#67e8f9" />
+          </linearGradient>
+        </defs>
+        <path
+          d="M8 26V6l16 20V6"
+          stroke="url(#nGrad)"
+          strokeWidth="3"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          fill="none"
+        />
+      </svg>
+    </div>
   );
 }
 
@@ -29,7 +39,7 @@ export default function WelcomeScreen() {
   return (
     <div className="welcome-screen">
       <div className="welcome-content">
-        <NexonSparkle />
+        <NexonIcon />
         <h1 className="welcome-title">What should we focus on?</h1>
         <ChatInput />
         <div className="welcome-actions">
